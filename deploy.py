@@ -68,27 +68,31 @@ def main():
     account_id = accounts[0]["id"]
     print(f"账号: {accounts[0]['name']}  id={account_id}")
 
-    # 2. 上传 Worker 脚本（multipart，指定 main module = worker.js）
+    # 2. 上传 Worker 脚本 + crons（Service Worker 语法，crons 走 metadata，wrangler 的做法）
+    #    单独调 /triggers/cron 会因该 token 的鉴权方案返回 415，故随脚本一起提交。
     js = (HERE / "worker.js").read_bytes()
     boundary = "----cfdeploy7d3f9a"
-    parts = (
-        f"--{boundary}\r\n"
-        'Content-Disposition: form-data; name="worker.js"; filename="worker.js"\r\n'
-        "Content-Type: application/javascript\r\n\r\n"
-    ).encode() + js + f"\r\n--{boundary}--\r\n".encode()
-    ok("上传 worker.js",
+    def part(name, filename, ctype, content: bytes):
+        cd = f'Content-Disposition: form-data; name="{name}"'
+        if filename:
+            cd += f'; filename="{filename}"'
+        return (f"--{boundary}\r\n{cd}\r\nContent-Type: {ctype}\r\n\r\n").encode() + content + b"\r\n"
+    metadata = json.dumps({
+        "body_part": "worker.js",
+        "crons": ["* * * * *"],
+        "bindings": [],
+    }).encode()
+    parts = (part("worker.js", "worker.js", "application/javascript", js)
+             + part("metadata", None, "application/json", metadata)
+             + f"--{boundary}--\r\n".encode())
+    ok("上传 worker.js + Cron * * * * *",
        *call("PUT", f"/accounts/{account_id}/workers/scripts/{WORKER}",
              raw=parts, content_type=f"multipart/form-data; boundary={boundary}"))
 
     # 3. 写加密密钥 GH_TOKEN
     ok("写入 GH_TOKEN 密钥",
        *call("PUT", f"/accounts/{account_id}/workers/scripts/{WORKER}/secrets",
-             body={"name": "GH_TOKEN", "text": GH_TOKEN}))
-
-    # 4. 配置 Cron 触发器（每分钟）
-    ok("配置 Cron * * * * *",
-       *call("PUT", f"/accounts/{account_id}/workers/scripts/{WORKER}/triggers/cron",
-             body={"crons": ["* * * * *"]}))
+             body={"name": "GH_TOKEN", "text": GH_TOKEN, "type": "secret_text"}))
 
     # 5. 开启 workers.dev 子域名
     ok("开启 workers.dev 子域名",
