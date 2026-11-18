@@ -42,7 +42,9 @@ export default {
     const now = new Date();
     const hour = now.getUTCHours();
     const minute = now.getUTCMinutes();
-    if (minute !== 0) return;
+    // Cloudflare Cron 实际执行可能延迟 1 分钟，放宽到 0/1 分都算整点，避免漏触发。
+    // 重复 dispatch 由下游各频道的去重逻辑吸收，不会造成重复推送。
+    if (minute > 1) return;
 
     for (const task of SCHEDULE) {
       if (task.everyHour || task.utc.includes(hour)) {
