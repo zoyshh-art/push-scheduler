@@ -23,40 +23,30 @@ GitHub Actions 的 `schedule` 事件在整点负载高峰会延迟，负载过�
 
 全部在 Cloudflare 边缘节点，**跟本机无关**，电脑关机、断网都不影响。配置完成后无需再管。
 
-免费额度：每天 10 万次请求，本 Worker 每分钟触发一次 = 1440 次/天，远低于上限；单次 CPU 时间也远低于 10ms 限制。
+免费额度：每天 10 万次请求，本 Worker 每小时触发一次 = 24 次/天，远低于上限。
 
-## 当前线上状态（2026-11-18 已部署）
+## 当前线上状态（2026-11-19 修复后）
 
 - Worker 名称：`info-push-scheduler`
 - 访问域名：`https://info-push-scheduler.zoyshh.workers.dev`
-- Cron 触发器：`* * * * *`（1 个，wrangler 部署时由 wrangler.toml 写入）
+- Cron 触发器：`2 * * * *`（每小时一次，整点后 2 分钟）
 - 密钥：`GH_TOKEN`（secret_text 类型）
-- 部署方式：wrangler CLI（见下）
+- **所有 workflow 已移除 `schedule`，Worker 是唯一触发源**
 
 Cloudflare 账号下另有早期脚本 `info-push`，是无关的旧脚本，勿动。
 
-## 重新部署（推荐：wrangler 一键）
+## 重新部署
 
-本机已有 Node 22 和 wrangler（通过 `npm exec` 临时拉取）。在本目录执行：
+已验证可用的方式（wrangler 在本机 `npx` 安装有问题，用 REST 脚本更稳）：
 
 ```bash
-export CLOUDFLARE_API_TOKEN=$(cat ../.cf_token)
-export CLOUDFLARE_ACCOUNT_ID=4a2df9b7f3c5c0fa1a8f29de6d7f4fd4
-export WRANGLER_SEND_METRICS=false
-npm exec --yes --package=wrangler -- wrangler deploy
+cd F:/ai/信息/push-scheduler
+python deploy.py
 ```
 
-`wrangler.toml` 里已写好 cron 和 main，脚本、cron、workers.dev 子域名一次搞定。
-部署前确认 `GH_TOKEN` 密钥还在（deploy 不会覆盖密钥）。
-
-### 为什么不用纯 REST API 部署
-
-试过用 Cloudflare REST API 一步步建，发现 API token 鉴权方案下：
-- `PUT /workers/scripts/{name}/triggers/cron` 返回 415，`PUT .../subdomain` 返回 405
-- 所有子资源 GET 都被路由到脚本源码本身
-
-改用 wrangler 后正常。`deploy.py` 保留了 REST 部署尝试（cron 通过上传时的 metadata 携带），
-但实际部署以 wrangler 为准。
+脚本会上传 worker.js + cron + GH_TOKEN 密钥。最后一步"开启 workers.dev 子域名"
+报 405 属正常（该 token 的鉴权方案不支持此子资源），子域名此前已开启，不影响使用。
+`wrangler.toml` 也保留了同样的 cron 配置，供换机器时参考。
 
 ### 密钥获取
 
@@ -90,20 +80,26 @@ Worker 内按 UTC 判断，对应北京时间：
 
 改时间只改 `worker.js` 里的 `SCHEDULE` 数组，然后重新 Deploy。
 
-## 和原有 schedule 的关系
+## 和 GitHub schedule 的关系（重要）
 
-**workflow 里的 `schedule` 建议保留不动**，作为兜底。
+**workflow 里的 `schedule` 必须删掉，不能留作兜底。**
 
-重复触发不会导致重复推送，因为各脚本都有去重：
+2026-11-19 排查发现两个真实故障：
 
-- `info-push` 三个频道：按条目 uid（链接哈希）永久去重，同一内容推过就不再推
-- `ai_deal.py`：按「厂商 + 日期」去重
-- `phone_deal.py`：同一机型同一价格档 24 小时内不重复，±1% 近价合并
+1. GitHub 原生 `schedule` 延迟严重且不可预测：赚钱机会配置 12:00，实际 20:42 才跑；
+   新闻出现在 03:40 / 12:46 / 20:51。这是"推送时间乱"的直接原因。
+2. 旧 Worker 的 cron 是 `* * * * *`，配合 `minute <= 1` 判断，导致每个整点在
+   :00 和 :01 各 dispatch 一次，两次运行都成功推送，同一内容收到两遍。
+   两次推送之间状态尚未提交，下游去重也拦不住。
 
-所以即使 GitHub 的 schedule 延迟到几小时后才跑，Worker 已经推过的内容它也不会再推一遍。
-反过来 Worker 出问题时，schedule 还能兜底。
+现在的处理：
 
-代价是 Actions 运行次数翻倍，但两个仓库一个是公开仓库（不计费），另一个用量远低于免费额度。
+- 五个 workflow 全部只保留 `workflow_dispatch`；
+- Worker cron 改为每小时一次（`2 * * * *`），从结构上消除双触发；
+- Worker 内部再加一层"本小时已 dispatch 则跳过"的幂等检查兜底。
+
+代价：Worker 挂了就完全没有推送。Cloudflare 定时比 GitHub schedule 可靠得多，
+且脚本极简，可接受。
 
 ## 备选方案：cron-job.org
 
