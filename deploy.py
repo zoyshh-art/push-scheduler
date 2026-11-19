@@ -79,17 +79,23 @@ def main():
         return (f"--{boundary}\r\n{cd}\r\nContent-Type: {ctype}\r\n\r\n").encode() + content + b"\r\n"
     metadata = json.dumps({
         "body_part": "worker.js",
-        "crons": ["* * * * *"],
+        "crons": ["2 * * * *"],
         "bindings": [],
     }).encode()
     parts = (part("worker.js", "worker.js", "application/javascript", js)
              + part("metadata", None, "application/json", metadata)
              + f"--{boundary}--\r\n".encode())
-    ok("上传 worker.js + Cron * * * * *",
+    ok("上传 worker.js",
        *call("PUT", f"/accounts/{account_id}/workers/scripts/{WORKER}",
              raw=parts, content_type=f"multipart/form-data; boundary={boundary}"))
 
-    # 3. 写加密密钥 GH_TOKEN
+    # 3. 显式设置 Cron。注意：脚本上传 metadata 里的 crons 实际不会改动定时配置，
+    #    必须单独 PUT /schedules，请求体是数组（不是对象），否则 400。
+    ok("设置 Cron：每小时一次（整点后 2 分）",
+       *call("PUT", f"/accounts/{account_id}/workers/scripts/{WORKER}/schedules",
+             body=[{"cron": "2 * * * *"}]))
+
+    # 4. 写加密密钥 GH_TOKEN
     ok("写入 GH_TOKEN 密钥",
        *call("PUT", f"/accounts/{account_id}/workers/scripts/{WORKER}/secrets",
              body={"name": "GH_TOKEN", "text": GH_TOKEN, "type": "secret_text"}))
