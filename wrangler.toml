@@ -2,7 +2,8 @@ name = "info-push-scheduler"
 main = "worker.js"
 compatibility_date = "2026-11-15"
 
-# 每分钟醒来一次，在整分时按 UTC 时刻判断该触发哪个 workflow。
-# 只占 1 个 trigger 配额（免费版每个 Worker 最多 3 个）。
+# 每小时只跑一次（整点后 2 分钟），在整点后按 UTC 时刻判断该触发哪个 workflow。
+# 之前配置为 "* * * * *"（每分钟），配合 minute<=1 过滤导致 :00/:01 各 dispatch 一次，
+# 造成同一内容重复推送。改成每小时一次后从结构上消除双触发。
 [triggers]
-crons = ["* * * * *"]
+crons = ["2 * * * *"]
